@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PalletOS — Warehouse Build Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@400;600;700;900&family=Barlow+Condensed:wght@700;900&display=swap" rel="stylesheet" />
+<style>
+  /* ── Design system ── Industrial / terminal aesthetic ───────────────── */
+  :root {
+    --bg:        #0d0f0e;
+    --surface:   #141715;
+    --surface2:  #1c201d;
+    --border:    #2a2f2b;
+    --border-hi: #3d4a3f;
+    --accent:    #b8ff4f;   /* safety-yellow-green */
+    --accent2:   #4fffb8;   /* teal highlight */
+    --muted:     #556655;
+    --text:      #d4e8d4;
+    --text-dim:  #7a9a7a;
+    --danger:    #ff5252;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Barlow', sans-serif;
+    --cond:      'Barlow Condensed', sans-serif;
+    --pallet-w:  360px;   /* scaled visual pallet width */
+    --pallet-d:  240px;   /* scaled visual pallet depth */
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 1fr;
+    overflow-x: hidden;
+  }
+
+  /* ── scanline overlay ─────────────────────────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.07) 2px,
+      rgba(0,0,0,.07) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 40px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo {
+    font-family: var(--cond);
+    font-weight: 900;
+    font-size: 1.7rem;
+    letter-spacing: .08em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--text-dim); }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: .75rem;
+    padding: 4px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    color: var(--accent);
+    letter-spacing: .1em;
+  }
+  .status-pill.idle  { border-color: var(--muted); color: var(--muted); }
+  .status-pill.busy  { border-color: #ffaa00; color: #ffaa00; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .4; } }
+
+  /* ── Main layout ─────────────────────────────────────────────────────── */
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 0;
+    max-width: 1300px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 32px 24px;
+    gap: 28px;
+  }
+
+  /* ── Panel shared ────────────────────────────────────────────────────── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .panel-title {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .panel-body { padding: 18px; }
+
+  /* ── Left sidebar ────────────────────────────────────────────────────── */
+  .sidebar { display: flex; flex-direction: column; gap: 18px; }
+
+  /* Order items */
+  .order-list { display: flex; flex-direction: column; gap: 8px; }
+  .order-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    transition: border-color .15s;
+  }
+  .order-row:hover { border-color: var(--border-hi); }
+  .color-chip {
+    width: 10px; height: 28px; border-radius: 2px; flex-shrink: 0;
+  }
+  .order-row .name {
+    flex: 1;
+    font-size: .88rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .order-row .badges {
+    display: flex; gap: 4px;
+  }
+  .badge {
+    font-family: var(--mono);
+    font-size: .62rem;
+    padding: 2px 5px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .badge.fragile { background: #1a0f2e; color: #c084fc; border: 1px solid #7c3aed44; }
+  .badge.heavy   { background: #1a0f0f; color: #f87171; border: 1px solid #dc262644; }
+  .qty-control {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .qty-btn {
+    width: 22px; height: 22px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .12s, color .12s;
+  }
+  .qty-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .qty-display {
+    font-family: var(--mono);
+    font-size: .82rem;
+    min-width: 20px;
+    text-align: center;
+    color: var(--accent);
+  }
+
+  /* Build button */
+  #build-btn {
+    width: 100%;
+    padding: 14px;
+    background: var(--accent);
+    color: #0d0f0e;
+    border: none;
+    border-radius: 3px;
+    font-family: var(--cond);
+    font-weight: 900;
+    font-size: 1.1rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform .1s, filter .15s;
+    position: relative;
+    overflow: hidden;
+  }
+  #build-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.15) 50%, transparent 100%);
+    transform: translateX(-100%);
+    transition: transform .4s;
+  }
+  #build-btn:hover::after { transform: translateX(100%); }
+  #build-btn:hover { filter: brightness(1.1); }
+  #build-btn:active { transform: scale(.98); }
+  #build-btn:disabled {
+    background: var(--muted);
+    cursor: not-allowed;
+    filter: none;
+  }
+
+  /* Metrics bar */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .metric {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    text-align: center;
+  }
+  .metric .val {
+    font-family: var(--mono);
+    font-size: 1.3rem;
+    color: var(--accent);
+    display: block;
+  }
+  .metric .lbl {
+    font-size: .65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+  }
+
+  /* ── Right area ──────────────────────────────────────────────────────── */
+  .right-area { display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Layer tabs ──────────────────────────────────────────────────────── */
+  .layer-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .layer-tab {
+    font-family: var(--mono);
+    font-size: .78rem;
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    cursor: pointer;
+    letter-spacing: .06em;
+    transition: all .12s;
+  }
+  .layer-tab.active {
+    background: var(--accent);
+    color: #0d0f0e;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* ── Pallet visual ───────────────────────────────────────────────────── */
+  .pallet-section {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .pallet-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  .pallet-label {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    letter-spacing: .08em;
+  }
+  #pallet-canvas {
+    width: var(--pallet-w);
+    height: var(--pallet-d);
+    border: 2px solid var(--border-hi);
+    border-radius: 3px;
+    background:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px),
+      var(--surface2);
+    background-size: 30px 30px;
+    position: relative;
+    overflow: hidden;
+  }
+  #pallet-canvas.empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .empty-msg {
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: .06em;
+  }
+
+  /* Crate boxes on the canvas */
+  .crate-box {
+    position: absolute;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: .58rem;
+    text-align: center;
+    padding: 2px;
+    cursor: pointer;
+    transition: filter .15s;
+    border: 1.5px solid rgba(0,0,0,.35);
+    overflow: hidden;
+    line-height: 1.2;
+    color: rgba(0,0,0,.8);
+    font-weight: 700;
+  }
+  .crate-box:hover { filter: brightness(1.2); z-index: 10; }
+  .crate-box.highlight { outline: 2px solid white; z-index: 20; }
+
+  /* Axis labels */
+  .axis-x, .axis-y {
+    font-family: var(--mono);
+    font-size: .62rem;
+    color: var(--muted);
+    position: absolute;
+    letter-spacing: .05em;
+  }
+  .axis-x { bottom: -20px; width: 100%; text-align: center; }
+  .axis-y {
+    top: 50%; left: -52px;
+    transform: rotate(-90deg) translateX(-50%);
+    transform-origin: center center;
+    white-space: nowrap;
+  }
+  .pallet-wrapper-outer {
+    position: relative;
+    margin-left: 50px;
+    margin-bottom: 28px;
+  }
+
+  /* Legend */
+  .legend {
+    flex: 1;
+    min-width: 160px;
+  }
+  .legend-title {
+    font-family: var(--cond);
+    font-size: .8rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .legend-items { display: flex; flex-direction: column; gap: 6px; }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .8rem;
+  }
+  .legend-chip {
+    width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0;
+    border: 1px solid rgba(0,0,0,.3);
+  }
+
+  /* ── Steps list ──────────────────────────────────────────────────────── */
+  #steps-panel { flex: 1; }
+  .steps-list { display: flex; flex-direction: column; gap: 6px; }
+  .step-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  .step-item:hover, .step-item.active {
+    border-color: var(--accent2);
+    background: rgba(79,255,184,.05);
+  }
+  .step-num {
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--accent2);
+    min-width: 32px;
+    padding-top: 2px;
+    letter-spacing: .05em;
+  }
+  .step-body { flex: 1; }
+  .step-instruction {
+    font-size: .85rem;
+    color: var(--text);
+    line-height: 1.4;
+  }
+  .step-meta {
+    font-family: var(--mono);
+    font-size: .65rem;
+    color: var(--text-dim);
+    margin-top: 3px;
+    letter-spacing: .04em;
+  }
+  .step-layer-badge {
+    font-family: var(--mono);
+    font-size: .65rem;
+    padding: 2px 7px;
+    border-radius: 2px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* ── Empty / error states ─────────────────────────────────────────────── */
+  .placeholder-msg {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--muted);
+    text-align: center;
+    padding: 40px 20px;
+    letter-spacing: .06em;
+  }
+  .error-msg {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--danger);
+    padding: 12px;
+    border: 1px solid var(--danger);
+    border-radius: 3px;
+    background: rgba(255,82,82,.07);
+  }
+
+  /* ── Footer ──────────────────────────────────────────────────────────── */
+  footer {
+    padding: 12px 40px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--muted);
+    letter-spacing: .06em;
+  }
+
+  /* ── Animations ──────────────────────────────────────────────────────── */
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-in { animation: fadeSlideIn .25s ease both; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    .pallet-section { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">Pallet<span>OS</span></div>
+  <div class="status-pill idle" id="status-pill">IDLE</div>
+</header>
+
+<!-- ── MAIN ────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- LEFT: Order builder + controls -->
+  <aside class="sidebar">
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="dot"></div>
+        <span class="panel-title">Order Items</span>
+      </div>
+      <div class="panel-body">
+        <div class="order-list" id="order-list">
+          <!-- populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <button id="build-btn">▶ Build Pallet</button>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="dot" style="background:var(--accent2)"></div>
+        <span class="panel-title">Summary</span>
+      </div>
+      <div class="panel-body">
+        <div class="metrics">
+          <div class="metric"><span class="val" id="m-steps">—</span><span class="lbl">Steps</span></div>
+          <div class="metric"><span class="val" id="m-layers">—</span><span class="lbl">Layers</span></div>
+          <div class="metric"><span class="val" id="m-crates">—</span><span class="lbl">Crates</span></div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- RIGHT: Visualisation + steps -->
+  <section class="right-area">
+
+    <!-- Pallet visual -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="dot" style="background:#ffaa00"></div>
+        <span class="panel-title">Pallet View</span>
+        <div style="margin-left:auto; display:flex; gap:6px;" id="layer-tabs"></div>
+      </div>
+      <div class="panel-body">
+        <div class="pallet-section">
+          <div class="pallet-wrap">
+            <div class="pallet-label">120 × 80 cm  |  Scale: 1cm = 3px</div>
+            <div class="pallet-wrapper-outer">
+              <div class="axis-y">DEPTH (cm) →</div>
+              <div id="pallet-canvas" class="empty-state">
+                <div class="empty-msg">Press "Build Pallet"<br/>to generate a layout</div>
+              </div>
+              <div class="axis-x">WIDTH (cm) →</div>
+            </div>
+          </div>
+          <div class="legend">
+            <div class="legend-title">Products</div>
+            <div class="legend-items" id="legend-items">
+              <div style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">No data yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Steps -->
+    <div class="panel" id="steps-panel">
+      <div class="panel-header">
+        <div class="dot" style="background:var(--accent2)"></div>
+        <span class="panel-title">Worker Instructions</span>
+        <span id="filter-layer-lbl" style="margin-left:auto;font-family:var(--mono);font-size:.7rem;color:var(--text-dim)"></span>
+      </div>
+      <div class="panel-body">
+        <div id="steps-container">
+          <div class="placeholder-msg">// awaiting pallet build...</div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<!-- ── FOOTER ──────────────────────────────────────────────────────────── -->
+<footer>
+  <span>PalletOS v1.0 · Greedy Layout Engine</span>
+  <span>EU Pallet 120×80 cm · Max 5 layers</span>
+  <span id="clock">--:--:--</span>
+</footer>
+
+<!-- ── JAVASCRIPT ───────────────────────────────────────────────────────── -->
+<script>
+const API = 'http://localhost:8000';
+const SCALE = 3;  // 1 cm = 3 px
+
+// ── Default sample order (editable via UI) ────────────────────────────────
+const SAMPLE_ORDER = [
+  { product_id: 'bananas',      quantity: 2, name: 'Bananas',      color: '#F5C518', fragile: false, heavy: true  },
+  { product_id: 'tomatoes',     quantity: 3, name: 'Tomatoes',     color: '#E53935', fragile: true,  heavy: false },
+  { product_id: 'grapes',       quantity: 1, name: 'Grapes',       color: '#8E24AA', fragile: true,  heavy: false },
+  { product_id: 'potatoes',     quantity: 1, name: 'Potatoes',     color: '#795548', fragile: false, heavy: true  },
+  { product_id: 'oranges',      quantity: 2, name: 'Oranges',      color: '#FB8C00', fragile: false, heavy: false },
+  { product_id: 'watermelons',  quantity: 1, name: 'Watermelons',  color: '#388E3C', fragile: false, heavy: true  },
+  { product_id: 'lettuce',      quantity: 2, name: 'Lettuce',      color: '#66BB6A', fragile: true,  heavy: false },
+];
+
+let currentSteps = [];
+let activeLayer  = 1;
+let maxLayer     = 1;
+
+// ── Clock ─────────────────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-GB');
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Render order list ─────────────────────────────────────────────────────
+function renderOrderList() {
+  const el = document.getElementById('order-list');
+  el.innerHTML = '';
+  SAMPLE_ORDER.forEach((item, i) => {
+    const row = document.createElement('div');
+    row.className = 'order-row';
+    row.innerHTML = `
+      <div class="color-chip" style="background:${item.color}"></div>
+      <span class="name">${item.name}</span>
+      <div class="badges">
+        ${item.fragile ? '<span class="badge fragile">fragile</span>' : ''}
+        ${item.heavy   ? '<span class="badge heavy">heavy</span>'   : ''}
+      </div>
+      <div class="qty-control">
+        <button class="qty-btn" onclick="changeQty(${i}, -1)">−</button>
+        <span class="qty-display" id="qty-${i}">${item.quantity}</span>
+        <button class="qty-btn" onclick="changeQty(${i}, +1)">+</button>
+      </div>
+    `;
+    el.appendChild(row);
+  });
+}
+
+function changeQty(i, delta) {
+  SAMPLE_ORDER[i].quantity = Math.max(0, SAMPLE_ORDER[i].quantity + delta);
+  document.getElementById(`qty-${i}`).textContent = SAMPLE_ORDER[i].quantity;
+}
+
+// ── Build pallet ──────────────────────────────────────────────────────────
+document.getElementById('build-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('build-btn');
+  const pill = document.getElementById('status-pill');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Computing...';
+  pill.className = 'status-pill busy';
+  pill.textContent = 'BUILDING';
+
+  const items = SAMPLE_ORDER
+    .filter(i => i.quantity > 0)
+    .map(i => ({ product_id: i.product_id, quantity: i.quantity }));
+
+  try {
+    const res = await fetch(`${API}/build-pallet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      showError(err.detail || 'Unknown error');
+      return;
+    }
+
+    currentSteps = await res.json();
+    maxLayer = Math.max(...currentSteps.map(s => s.layer));
+    activeLayer = 1;
+
+    renderLayerTabs();
+    renderPallet();
+    renderSteps();
+    renderLegend();
+    renderMetrics();
+
+    pill.className = 'status-pill';
+    pill.textContent = 'READY';
+
+  } catch (e) {
+    showError(`Cannot reach API at ${API}. Is the server running?`);
+    pill.className = 'status-pill idle';
+    pill.textContent = 'ERROR';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Build Pallet';
+  }
+});
+
+// ── Layer tabs ────────────────────────────────────────────────────────────
+function renderLayerTabs() {
+  const el = document.getElementById('layer-tabs');
+  el.innerHTML = '';
+  for (let l = 1; l <= maxLayer; l++) {
+    const btn = document.createElement('button');
+    btn.className = 'layer-tab' + (l === activeLayer ? ' active' : '');
+    btn.textContent = `L${l}`;
+    btn.onclick = () => { activeLayer = l; renderLayerTabs(); renderPallet(); renderSteps(); };
+    el.appendChild(btn);
+  }
+}
+
+// ── Pallet visual ─────────────────────────────────────────────────────────
+function renderPallet() {
+  const canvas = document.getElementById('pallet-canvas');
+  canvas.classList.remove('empty-state');
+  canvas.innerHTML = '';
+
+  const layerSteps = currentSteps.filter(s => s.layer === activeLayer);
+
+  layerSteps.forEach(step => {
+    const box = document.createElement('div');
+    box.className = 'crate-box animate-in';
+    box.style.left   = (step.x * SCALE) + 'px';
+    box.style.top    = (step.y * SCALE) + 'px';
+    box.style.width  = (step.width  * SCALE) + 'px';
+    box.style.height = (step.length * SCALE) + 'px';
+    box.style.background = step.color;
+
+    // Shorten name for tiny crates
+    const shortName = step.product_name.length > 8
+      ? step.product_name.slice(0, 7) + '…'
+      : step.product_name;
+    box.textContent = `#${step.step}\n${shortName}`;
+    box.style.whiteSpace = 'pre';
+
+    box.title = `Step ${step.step}: ${step.product_name}\n${step.instruction}`;
+
+    box.addEventListener('click', () => highlightStep(step.step));
+    canvas.appendChild(box);
+  });
+}
+
+// ── Steps list ────────────────────────────────────────────────────────────
+function renderSteps() {
+  const container = document.getElementById('steps-container');
+  const visible   = currentSteps.filter(s => s.layer === activeLayer);
+
+  document.getElementById('filter-layer-lbl').textContent =
+    `Layer ${activeLayer} · ${visible.length} steps`;
+
+  if (visible.length === 0) {
+    container.innerHTML = '<div class="placeholder-msg">No steps for this layer.</div>';
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'steps-list';
+
+  visible.forEach(step => {
+    const item = document.createElement('div');
+    item.className = 'step-item animate-in';
+    item.id = `step-${step.step}`;
+    item.style.animationDelay = ((step.step % 20) * 30) + 'ms';
+    item.innerHTML = `
+      <span class="step-num">S${String(step.step).padStart(2,'0')}</span>
+      <div class="step-body">
+        <div class="step-instruction">${step.instruction}</div>
+        <div class="step-meta">${step.crate_type} · ${step.width}×${step.length}×${step.height} cm</div>
+      </div>
+      <span class="step-layer-badge">L${step.layer}</span>
+    `;
+    item.addEventListener('click', () => highlightStep(step.step));
+    list.appendChild(item);
+  });
+
+  container.innerHTML = '';
+  container.appendChild(list);
+}
+
+// ── Highlight step (cross-link canvas ↔ list) ─────────────────────────────
+function highlightStep(stepNum) {
+  // Clear previous
+  document.querySelectorAll('.crate-box').forEach(b => b.classList.remove('highlight'));
+  document.querySelectorAll('.step-item').forEach(b => b.classList.remove('active'));
+
+  // Highlight canvas box
+  const boxes = document.querySelectorAll('.crate-box');
+  boxes.forEach(b => {
+    if (b.textContent.startsWith(`#${stepNum}`)) b.classList.add('highlight');
+  });
+
+  // Highlight step row
+  const row = document.getElementById(`step-${stepNum}`);
+  if (row) {
+    row.classList.add('active');
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// ── Legend ────────────────────────────────────────────────────────────────
+function renderLegend() {
+  const seen    = {};
+  const el      = document.getElementById('legend-items');
+  el.innerHTML  = '';
+
+  currentSteps.forEach(s => {
+    if (!seen[s.product_id]) {
+      seen[s.product_id] = { name: s.product_name, color: s.color };
+    }
+  });
+
+  Object.values(seen).forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `
+      <div class="legend-chip" style="background:${p.color}"></div>
+      <span>${p.name}</span>
+    `;
+    el.appendChild(item);
+  });
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────
+function renderMetrics() {
+  document.getElementById('m-steps').textContent  = currentSteps.length;
+  document.getElementById('m-layers').textContent = maxLayer;
+  document.getElementById('m-crates').textContent = currentSteps.length;
+}
+
+// ── Error display ─────────────────────────────────────────────────────────
+function showError(msg) {
+  const container = document.getElementById('steps-container');
+  container.innerHTML = `<div class="error-msg">⚠ ${msg}</div>`;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+renderOrderList();
+</script>
+</body>
+</html>
